@@ -88,7 +88,14 @@
                           (str "Vault reference for `type_secret`. Either "
                                "{\"ref\":\"op://Vault/Item/field\"} or "
                                "{\"item\":\"..\",\"field\":\"password|username|totp\",\"vault\":\"..\"}. "
-                               "The host resolves it from the vault; you never see the value.")}
+                               "The host resolves it from the vault; you never see the value.")
+                          ;; `properties` is required: a bare object-typed param
+                          ;; makes some tool-schema validators (Ollama) reject the
+                          ;; whole request with a misleading 404 model-not-found.
+                          :properties {:ref {:type "string"}
+                                       :item {:type "string"}
+                                       :field {:type "string"}
+                                       :vault {:type "string"}}}
              :scroll_direction {:type "string" :enum ["up" "down" "left" "right"]}
              :scroll_amount {:type "integer"}}
             :required ["action"]}

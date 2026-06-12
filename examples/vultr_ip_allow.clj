@@ -19,9 +19,11 @@
   op must be signed in (`op signin`) / bw unlocked (`BW_SESSION=$(bw unlock --raw)`)."
   (:require [computeruse.macos :as macos]
             [computeruse.vault :as vault]
+            [computeruse.openai-model :as oai]
             [computeruse.agent :as agent]
             [langchain.model :as model]
-            [langchain.db :as db]))
+            [langchain.db :as db]
+            [jvm-host :as host]))
 
 (def system-prompt
   (str "You are a computer-use agent operating the user's macOS desktop.\n"
@@ -59,6 +61,19 @@
     "bw" (vault/bw-vault {})
     (throw (ex-info "VAULT must be op or bw" {}))))
 
+(defn make-model []
+  ;; MODEL=gemma (local Ollama, default) | anthropic
+  (if (= "anthropic" (System/getenv "MODEL"))
+    (model/anthropic-model {:api-key (System/getenv "ANTHROPIC_API_KEY")
+                            :http-fn host/http-fn
+                            :json-write host/json-write :json-read host/json-read})
+    (oai/openai-model {:base-url (or (System/getenv "OPENAI_BASE_URL")
+                                     "http://localhost:11434/v1")
+                       :model (or (System/getenv "OPENAI_MODEL") "gemma4:e4b-it-qat")
+                       :max-tokens 2048
+                       :http-fn host/http-fn
+                       :json-write host/json-write :json-read host/json-read})))
+
 (defn -main [& [ip subnet]]
   (let [ip (or ip (System/getenv "VULTR_ALLOW_IP"))
         _ (assert ip "usage: (vultr-ip-allow/-main \"203.0.113.7\") or VULTR_ALLOW_IP env")
@@ -67,8 +82,7 @@
         vname (System/getenv "VULTR_VAULT")
         conn (db/create-conn agent/log-schema)
         {:keys [result steps]}
-        (agent/run {:model (model/anthropic-model
-                            {:api-key (System/getenv "ANTHROPIC_API_KEY")})
+        (agent/run {:model (make-model)
                     :computer (macos/macos-computer)
                     :vault (make-vault)
                     :system system-prompt

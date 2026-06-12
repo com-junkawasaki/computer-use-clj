@@ -103,6 +103,28 @@ Datomic action log (which records only the ref).
 - `bw-vault` → `bw get password|username|totp <item>` (+ custom fields)
 - `mock-vault` → deterministic map for tests
 
+## Local model (Ollama / OpenAI-compatible)
+
+`computeruse.openai-model/openai-model` drives the agent with a LOCAL
+model instead of the Anthropic API — vision via image_url, tool-calling
+via OpenAI `tools`. `examples/jvm_host.clj` provides the JVM host caps
+(an :http-fn that shells out to `curl`, JSON via data.json).
+
+```sh
+# Gemma 4 E4B QAT on Ollama, controlling this desktop:
+OPENAI_BASE_URL=http://127.0.0.1:11434/v1 OPENAI_MODEL=gemma4:e4b-it-qat \
+VAULT=op VULTR_VAULT_ITEM=Vultr \
+  clojure -M:gemma -m vultr-ip-allow 203.0.113.7 32
+```
+
+Notes from running Ollama 0.30.x: tool params of `type:"object"` must
+include `properties` (a bare object 404s the whole request); tool-call
+`arguments` must be a JSON string (not EDN); java.net.http POSTs were
+rejected by Ollama's request framing, so the host :http-fn uses curl.
+Small models (4-8B) drive navigation/keys/screenshots but are often too
+weak to complete multi-step portal UIs reliably — use a larger model or
+the Anthropic backend (`MODEL=anthropic`) for hard tasks.
+
 ## Real host: macOS
 
 `computeruse.macos/macos-computer` implements IComputer over the live
