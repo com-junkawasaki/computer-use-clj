@@ -80,6 +80,27 @@ See [docs/adr/0001-architecture.md](docs/adr/0001-architecture.md) for
 the computer-use → computer-use-clj correspondence (action vocabulary,
 sampling loop, tool wire format) and the host-capability split.
 
+## Real host: macOS
+
+`computeruse.macos/macos-computer` implements IComputer over the live
+macOS desktop (screencapture + sips screenshots as Anthropic image
+blocks, System Events keys, cliclick mouse — `brew install cliclick`,
+grant Screen Recording + Accessibility). Coordinates are auto-scaled
+between the model-sized screenshot and display points.
+
+`examples/vultr_ip_allow.clj` uses it for a real ops task — adding an
+IP to a Vultr API key's Access Control list in an already-signed-in
+browser session. Hard guardrails in the system prompt: the agent never
+types into credential fields and bails out (success=false) when a
+login/2FA page appears; it only ever adds the one requested entry.
+
+```sh
+ANTHROPIC_API_KEY=… clojure -Sdeps '{:paths ["src" "examples"]
+                 :deps {io.github.com-junkawasaki/langgraph-clj
+                        {:git/tag "v0.2.0" :git/sha "133740f"}}}' \
+        -M -e "(require 'vultr-ip-allow) (vultr-ip-allow/-main \"203.0.113.7\")"
+```
+
 ## Tests / example
 
 ```sh
