@@ -80,6 +80,29 @@ See [docs/adr/0001-architecture.md](docs/adr/0001-architecture.md) for
 the computer-use → computer-use-clj correspondence (action vocabulary,
 sampling loop, tool wire format) and the host-capability split.
 
+## Credentials from a vault (no raw secrets)
+
+The agent never types a literal password. `computeruse.vault/IVault`
+is an injected host capability; the `computer` tool gains a
+`type_secret` action that takes a vault *reference*
+(`{"item":"Vultr","field":"password"}` or `"op://Vault/Item/field"`),
+resolves it through the vault CLI, and types it at the IComputer layer.
+The secret never enters the prompt, the message history, or the
+Datomic action log (which records only the ref).
+
+```clojure
+(require '[computeruse.vault :as vault])
+(agent/run {:vault (vault/op-vault {})        ; 1Password: `op` signed in
+            ;; or (vault/bw-vault {})         ; Bitwarden: BW_SESSION set
+            :computer (macos/macos-computer)
+            :system "...use type_secret for credential fields; never type a raw secret..."
+            ...})
+```
+
+- `op-vault` → `op read op://Vault/Item/field` or `op item get … --reveal`
+- `bw-vault` → `bw get password|username|totp <item>` (+ custom fields)
+- `mock-vault` → deterministic map for tests
+
 ## Real host: macOS
 
 `computeruse.macos/macos-computer` implements IComputer over the live

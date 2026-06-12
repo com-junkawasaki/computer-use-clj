@@ -1,63 +1,87 @@
 (ns vultr-ip-allow
-  "Add an IP to a Vultr API key's Access Control list via computer use.
+  "Add an IP to a Vultr API key's Access Control list via computer use,
+  with vault-backed login — the agent NEVER types a raw credential.
 
      ANTHROPIC_API_KEY=… clojure -Sdeps '{:paths [\"src\" \"examples\"]
                   :deps {io.github.com-junkawasaki/langgraph-clj
                          {:git/tag \"v0.2.0\" :git/sha \"133740f\"}}}' \\
        -M -e \"(require 'vultr-ip-allow) (vultr-ip-allow/-main \\\"203.0.113.7\\\")\"
 
-  Premises / guardrails:
-  - A browser window with an ALREADY AUTHENTICATED my.vultr.com session
-    must be frontmost. The agent never logs in: the system prompt
-    forbids typing into any credential field, and if a login/2FA page
-    appears the run ends with success=false asking the human to sign in.
-  - The agent only ADDS one allowlist entry and saves; it never removes
-    entries or touches other account settings.
+  Credentials come from a vault (1Password by default; set VAULT=bw for
+  Bitwarden). The agent fills the login form with the `type_secret`
+  action, which resolves the secret at the host/vault layer and types
+  it without it ever reaching the model, the message history, or the
+  Datomic action log. No secret is ever passed as raw text.
 
-  The action trail is datoms (computeruse.agent/log-schema), so the
-  whole portal interaction is auditable after the fact."
+  Vault item is configured by env:
+    VULTR_VAULT_ITEM   (default \"Vultr\")
+    VULTR_VAULT        1Password vault name (optional)
+  op must be signed in (`op signin`) / bw unlocked (`BW_SESSION=$(bw unlock --raw)`)."
   (:require [computeruse.macos :as macos]
+            [computeruse.vault :as vault]
             [computeruse.agent :as agent]
             [langchain.model :as model]
             [langchain.db :as db]))
 
 (def system-prompt
   (str "You are a computer-use agent operating the user's macOS desktop.\n"
-       "HARD RULES:\n"
-       "- NEVER type into username, password, OTP or any credential field.\n"
-       "- If a login, re-authentication or 2FA page appears, immediately call\n"
-       "  `done` with success=false and text asking the human to sign in first.\n"
+       "HARD RULES (credentials):\n"
+       "- NEVER use the `type` action for a username, password, OTP or any\n"
+       "  credential field. Use `type_secret` with the vault secret_ref instead;\n"
+       "  the host fills it from the vault and you never see the value.\n"
+       "- You do not know and must not guess any secret. If a field needs a\n"
+       "  credential you have no secret_ref for, call `done` success=false.\n"
+       "HARD RULES (scope):\n"
        "- Only ADD the single allowlist entry you were asked to add, then save.\n"
-       "  Never delete or edit existing entries or other settings.\n"
-       "Work in the frontmost browser window. Use cmd+l to focus the address\n"
-       "bar. Take screenshots to verify every step before and after acting."))
+       "  Never delete or edit existing entries or other account settings.\n"
+       "Work in the frontmost browser window; cmd+l focuses the address bar.\n"
+       "Screenshot to verify every step before and after acting."))
 
-(defn task [ip subnet-size]
-  (str "In the frontmost browser, open https://my.vultr.com/settings/#settingsapi "
-       "(Vultr → Account → API). In the 'Access Control' / allowed IPs section of "
-       "the personal API key, add the IPv4 subnet " ip "/" subnet-size
-       " to the allowlist and click the add/update button so it is saved. "
-       "Confirm via screenshot that the new entry is listed, then call done "
-       "with success=true and the entry you added."))
+(defn task [ip subnet item vault-name]
+  (let [ref (cond-> {:item item :field "password"}
+              vault-name (assoc :vault vault-name))
+        user-ref (cond-> {:item item :field "username"}
+                   vault-name (assoc :vault vault-name))]
+    (str "Goal: in the frontmost browser, ensure my.vultr.com is signed in, then "
+         "open https://my.vultr.com/settings/#settingsapi and add the IPv4 subnet "
+         ip "/" subnet " to the personal API key's Access Control allowlist and save.\n"
+         "If a Vultr login page appears, fill the email field with `type_secret` "
+         "secret_ref " (pr-str user-ref) " and the password field with `type_secret` "
+         "secret_ref " (pr-str ref) ", then submit. If a 2FA/OTP prompt appears and "
+         "the item has a `totp` field, use `type_secret` secret_ref "
+         (pr-str (assoc (dissoc ref :field) :field "totp")) ".\n"
+         "After saving, screenshot to confirm the new allowlist entry is listed, "
+         "then call done success=true with the entry you added.")))
+
+(defn make-vault []
+  (case (or (System/getenv "VAULT") "op")
+    "op" (vault/op-vault {:account (System/getenv "OP_ACCOUNT")})
+    "bw" (vault/bw-vault {})
+    (throw (ex-info "VAULT must be op or bw" {}))))
 
 (defn -main [& [ip subnet]]
   (let [ip (or ip (System/getenv "VULTR_ALLOW_IP"))
         _ (assert ip "usage: (vultr-ip-allow/-main \"203.0.113.7\") or VULTR_ALLOW_IP env")
         subnet (or subnet "32")
+        item (or (System/getenv "VULTR_VAULT_ITEM") "Vultr")
+        vname (System/getenv "VULTR_VAULT")
         conn (db/create-conn agent/log-schema)
         {:keys [result steps]}
         (agent/run {:model (model/anthropic-model
                             {:api-key (System/getenv "ANTHROPIC_API_KEY")})
                     :computer (macos/macos-computer)
+                    :vault (make-vault)
                     :system system-prompt
-                    :task (task ip subnet)
+                    :task (task ip subnet item vname)
                     :history-conn conn
                     :session-id (str "vultr-ip-" ip)
-                    :max-steps 40})]
+                    :max-steps 50})]
     (println "result:" result "| steps:" steps)
+    ;; audit trail records the action + secret_ref, never the secret value
     (println "audit:"
              (sort-by first
-                      (db/q '[:find ?step ?a
+                      (db/q '[:find ?step ?a ?in
                               :where [?e :caction/step ?step]
-                                     [?e :caction/action ?a]]
+                                     [?e :caction/action ?a]
+                                     [?e :caction/input ?in]]
                             (db/db conn))))))

@@ -58,6 +58,7 @@
 
   opts: {:model ChatModel  :computer IComputer
          :display {:width 1280 :height 800}
+         :vault IVault             ; optional — enables `type_secret` credential injection
          :tools [tool…]            ; extra tools alongside `computer`
          :system \"…\"
          :history-conn conn        ; optional — action log datoms
@@ -65,10 +66,11 @@
          :db-api langchain.db/api
          :max-steps 25
          :compile-opts {…}}"
-  [{:keys [model computer display tools system history-conn session-id db-api
+  [{:keys [model computer display vault tools system history-conn session-id db-api
            max-steps compile-opts]
     :or {db-api db/api max-steps 25 session-id "default"}}]
-  (let [all-tools (into [(ctool/computer-tool computer display) done-tool]
+  (let [all-tools (into [(ctool/computer-tool computer (assoc display :vault vault))
+                         done-tool]
                         tools)
         step-counter (atom 0)
         call-model
