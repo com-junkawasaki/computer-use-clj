@@ -32,6 +32,7 @@
     STAGE           register | createapp        (default register)
     VAULT           op | bw                     (default op; op must be signed in)"
   (:require [computeruse.macos :as macos]
+            [computeruse.computer :as c]
             [computeruse.vault :as vault]
             [computeruse.agent :as agent]
             [jvm-host :as host]
@@ -39,6 +40,9 @@
   (:import [java.util List]))
 
 (def register-url "https://developers.epo.org/")
+(def register-start-url
+  (or (System/getenv "EPO_REGISTER_URL")
+      "https://developers.epo.org/en/register/start-process"))
 
 (defn- sh [& args]
   (let [p (.start (ProcessBuilder. ^List (vec args)))
@@ -49,6 +53,40 @@
       (throw (ex-info (str "command failed (exit " code ")")
                       {:exit code :stderr (subs err 0 (min 200 (count err)))})))
     out))
+
+(defn ensure-browser-on-main-display!
+  "Move the browser's front window onto the MAIN display (origin 0,0). The macOS
+  host's screencapture grabs the MAIN display and cliclick clicks main-display
+  coordinates — so if the browser sits on a second display or a separate
+  fullscreen Space, the agent is BLIND to it (every screenshot shows whatever is
+  on the main display) and its clicks miss. Pinning the window to {0,25,…} drops
+  it onto the main display's visible Space, where the agent can see and click it.
+  This is the fix for the 'agent can't see the browser' trap."
+  [app]
+  (try
+    (sh "osascript"
+        "-e" (str "tell application \"" app "\" to activate")
+        "-e" (str "tell application \"" app "\" to set bounds of front window to {0, 25, 1440, 900}"))
+    (catch Exception _ nil)))
+
+(defn browser-focused-computer
+  "Wraps an IComputer so `app` is forced frontmost before every action. This
+  kills the focus contention that breaks a global-input agent launched from a
+  terminal: System Events keystrokes (osascript) go to the FRONTMOST app, so
+  without this they land in the terminal, not the browser. cliclick clicks then
+  reliably hit the visible browser. Read-only ops (move/cursor) skip activation."
+  [inner app]
+  (let [front! (fn [] (try (sh "osascript" "-e"
+                               (str "tell application \"" app "\" to activate"))
+                           (catch Exception _ nil)))]
+    (reify c/IComputer
+      (-screenshot [_] (front!) (c/-screenshot inner))
+      (-key! [_ combo] (front!) (c/-key! inner combo))
+      (-type! [_ text] (front!) (c/-type! inner text))
+      (-mouse-move! [_ x y] (c/-mouse-move! inner x y))
+      (-click! [_ b x y] (front!) (c/-click! inner b x y))
+      (-scroll! [_ x y d a] (front!) (c/-scroll! inner x y d a))
+      (-cursor-position [_] (c/-cursor-position inner)))))
 
 (def system-prompt
   (str "You are a computer-use agent operating the user's macOS desktop to register "
@@ -94,10 +132,9 @@
     (throw (ex-info "VAULT must be op or bw" {}))))
 
 (defn register-task [name email pw-ref]
-  (str "Goal: in the frontmost browser, open " register-url " and REGISTER a new free "
-       "developer account.\n"
-       "- Find and click the register / sign-up link, choose the FREE 'Non-paying' "
-       "access tier.\n"
+  (str "Goal: in the frontmost browser, open " register-start-url " and REGISTER a new "
+       "free developer account (this is the EPO registration start page).\n"
+       "- Choose the FREE 'Non-paying' access tier if asked.\n"
        "- Full name: " name "\n"
        "- Email: " email "\n"
        "- Password field(s): use `type_secret` with secret_ref " (pr-str pw-ref)
@@ -125,6 +162,7 @@
         vname (or (System/getenv "EPO_VAULT") "gftdcojp")
         item (or (System/getenv "EPO_VAULT_ITEM") "epo.ops/developer-account")
         app-name (or (System/getenv "EPO_APP_NAME") "hirameki-patent-mirror")
+        browser (or (System/getenv "EPO_BROWSER") "Google Chrome")
         pw-ref {:item item :field "password" :vault vname}
         task (case stage
                "register" (register-task
@@ -133,10 +171,11 @@
                            email pw-ref)
                "createapp" (createapp-task email pw-ref app-name)
                (throw (ex-info "STAGE must be register or createapp" {:stage stage})))
+        _ (ensure-browser-on-main-display! browser)
         conn (db/create-conn agent/log-schema)
         {:keys [result done steps]}
         (agent/run (cond-> {:model (host/make-model)
-                            :computer (macos/macos-computer)
+                            :computer (browser-focused-computer (macos/macos-computer) browser)
                             :vault (make-vault)
                             :system system-prompt
                             :task task
