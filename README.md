@@ -80,6 +80,66 @@ See [docs/adr/0001-architecture.md](docs/adr/0001-architecture.md) for
 the computer-use → computer-use-clj correspondence (action vocabulary,
 sampling loop, tool wire format) and the host-capability split.
 
+## Credentials from a vault (no raw secrets)
+
+The agent never types a literal password. `computeruse.vault/IVault`
+is an injected host capability; the `computer` tool gains a
+`type_secret` action that takes a vault *reference*
+(`{"item":"Vultr","field":"password"}` or `"op://Vault/Item/field"`),
+resolves it through the vault CLI, and types it at the IComputer layer.
+The secret never enters the prompt, the message history, or the
+Datomic action log (which records only the ref).
+
+```clojure
+(require '[computeruse.vault :as vault])
+(agent/run {:vault (vault/op-vault {})        ; 1Password: `op` signed in
+            ;; or (vault/bw-vault {})         ; Bitwarden: BW_SESSION set
+            :computer (macos/macos-computer)
+            :system "...use type_secret for credential fields; never type a raw secret..."
+            ...})
+```
+
+- `op-vault` → `op read op://Vault/Item/field` or `op item get … --reveal`
+- `bw-vault` → `bw get password|username|totp <item>` (+ custom fields)
+- `mock-vault` → deterministic map for tests
+
+## Real host: macOS
+
+`computeruse.macos/macos-computer` implements IComputer over the live
+macOS desktop (screencapture + sips screenshots as Anthropic image
+blocks, System Events keys, cliclick mouse — `brew install cliclick`,
+grant Screen Recording + Accessibility). Coordinates are auto-scaled
+between the model-sized screenshot and display points.
+
+`examples/vultr_ip_allow.clj` uses it for a real ops task — adding an
+IP to a Vultr API key's Access Control list in an already-signed-in
+browser session. Hard guardrails in the system prompt: the agent never
+types into credential fields and bails out (success=false) when a
+login/2FA page appears; it only ever adds the one requested entry.
+
+`examples/sumitclub_meisai.clj` is a read-only variant — fetching a
+card 利用明細 (statement) from sumitclub.jp. Login goes through
+`type_secret` (vault ref, never a raw credential), the system prompt
+forbids every state-changing control on the site, and the extracted
+rows are persisted via a custom `save_statement` tool as EDN, ready
+for downstream ingestion. It runs on a **local model by default**
+(Ollama serving gemma 4 QAT — tools + vision capable), so statement
+data never leaves the machine; `examples/jvm_host.clj` provides the
+JVM host capabilities and the `LLM=ollama|gemini|anthropic` switch
+(gemini = Gemini's OpenAI-compatible endpoint with `GEMINI_API_KEY`).
+
+```sh
+SUMITCLUB_VAULT_ITEM=sumitclub \
+  clojure -M:dev:examples -e "(require 'sumitclub-meisai) (sumitclub-meisai/-main)"
+```
+
+```sh
+ANTHROPIC_API_KEY=… clojure -Sdeps '{:paths ["src" "examples"]
+                 :deps {io.github.com-junkawasaki/langgraph-clj
+                        {:git/tag "v0.2.0" :git/sha "133740f"}}}' \
+        -M -e "(require 'vultr-ip-allow) (vultr-ip-allow/-main \"203.0.113.7\")"
+```
+
 ## Tests / example
 
 ```sh
