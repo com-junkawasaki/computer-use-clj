@@ -17,4 +17,7 @@
   ;; drive a real desktop with a local/remote model (Ollama Gemma 4 E4B QAT
   ;; by default). `clojure -M:gemma -m vultr-ip-allow 220.146.252.121 32`
   :gemma {:extra-paths ["examples"]
-          :extra-deps {org.clojure/data.json {:mvn/version "2.5.0"}}}}}
+          :extra-deps {org.clojure/data.json {:mvn/version "2.5.0"}}}
+  ;; read-only statement examples (sumitclub_meisai); `-M:dev:examples`
+  :examples {:extra-paths ["examples"]
+             :extra-deps {org.clojure/data.json {:mvn/version "2.5.1"}}}}}

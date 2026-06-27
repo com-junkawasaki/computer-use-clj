@@ -9,7 +9,8 @@
   java.net.http regardless of HTTP version / User-Agent / Accept — an
   Ollama request-framing quirk). curl is the reliable transport here."
   (:require [clojure.data.json :as json]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [langchain.model :as model]))
 
 (defn http-fn [{:keys [url method headers body]}]
   (let [hdr-args (mapcat (fn [[k v]] ["-H" (str k ": " v)]) headers)
@@ -35,3 +36,40 @@
 
 (defn json-write [m] (json/write-str m))
 (defn json-read [s] (json/read-str s :key-fn keyword))
+
+
+(def host-caps
+  {:http-fn http-fn :json-write json-write :json-read json-read})
+
+(def default-ollama-model "hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL")
+
+(defn make-model
+  "ChatModel from env (LLM=ollama|gemini|anthropic; default local Ollama).
+  Reuses this host's curl :http-fn + data.json caps. Carried over from
+  reconcile PR #3 — also unblocks examples/epo_ops_register.clj, which
+  already calls host/make-model."
+  []
+  (case (or (System/getenv "LLM") "ollama")
+    "ollama"
+    (model/openai-model
+     (merge host-caps
+            {:url (or (System/getenv "OLLAMA_URL")
+                      "http://localhost:11434/v1/chat/completions")
+             :model (or (System/getenv "OLLAMA_MODEL") default-ollama-model)}))
+
+    "gemini"
+    (model/openai-model
+     (merge host-caps
+            {:url "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+             :model (or (System/getenv "GEMINI_MODEL") "gemini-2.5-flash")
+             :api-key (or (System/getenv "GEMINI_API_KEY")
+                          (throw (ex-info "GEMINI_API_KEY is required for LLM=gemini" {})))}))
+
+    "anthropic"
+    (model/anthropic-model
+     (cond-> (merge host-caps
+                    {:api-key (or (System/getenv "ANTHROPIC_API_KEY")
+                                  (throw (ex-info "ANTHROPIC_API_KEY is required for LLM=anthropic" {})))})
+       (System/getenv "ANTHROPIC_MODEL") (assoc :model (System/getenv "ANTHROPIC_MODEL"))))
+
+    (throw (ex-info "LLM must be ollama, gemini or anthropic" {}))))

@@ -139,6 +139,22 @@ browser session. Hard guardrails in the system prompt: the agent never
 types into credential fields and bails out (success=false) when a
 login/2FA page appears; it only ever adds the one requested entry.
 
+`examples/sumitclub_meisai.clj` is a read-only variant — fetching a
+card 利用明細 (statement) from sumitclub.jp. Login goes through
+`type_secret` (vault ref, never a raw credential), the system prompt
+forbids every state-changing control on the site, and the extracted
+rows are persisted via a custom `save_statement` tool as EDN, ready
+for downstream ingestion. It runs on a **local model by default**
+(Ollama serving gemma 4 QAT — tools + vision capable), so statement
+data never leaves the machine; `examples/jvm_host.clj` provides the
+JVM host capabilities and the `LLM=ollama|gemini|anthropic` switch
+(gemini = Gemini's OpenAI-compatible endpoint with `GEMINI_API_KEY`).
+
+```sh
+SUMITCLUB_VAULT_ITEM=sumitclub \
+  clojure -M:dev:examples -e "(require 'sumitclub-meisai) (sumitclub-meisai/-main)"
+```
+
 ```sh
 ANTHROPIC_API_KEY=… clojure -Sdeps '{:paths ["src" "examples"]
                  :deps {io.github.com-junkawasaki/langgraph-clj
