@@ -13,4 +13,7 @@
   :dev {:override-deps {io.github.com-junkawasaki/langgraph-clj
                         {:local/root "../langgraph-clj"}
                         io.github.com-junkawasaki/langchain-clj
-                        {:local/root "../langchain-clj"}}}}}
+                        {:local/root "../langchain-clj"}}}
+  ;; runnable examples (JVM hosts: real HTTP + JSON capabilities)
+  :examples {:extra-paths ["examples"]
+             :extra-deps {org.clojure/data.json {:mvn/version "2.5.1"}}}}}
