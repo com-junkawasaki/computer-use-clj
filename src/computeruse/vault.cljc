@@ -8,9 +8,10 @@
   history, or the Datomic action log (which records only the ref).
 
   IVault implementations:
-    op-vault   1Password CLI  (`op read` / `op item get`)
-    bw-vault   Bitwarden CLI  (`bw get`)
-    mock-vault deterministic map, for tests
+    op-vault    1Password CLI  (`op read` / `op item get`)
+    bw-vault    Bitwarden CLI  (`bw get`)
+    kagi-vault  kagi-clj CLI   (`kagi get` — `op`-compatible PQC vault)
+    mock-vault  deterministic map, for tests
 
   A reference is a map:
     {:ref  \"op://Private/Vultr/password\"}            ; explicit secret-reference URI
@@ -107,6 +108,43 @@
           :else
           (throw (ex-info "bw-vault: reference needs :ref or :item+:field"
                           {:reference (dissoc reference :value)})))))))
+
+;; ───────────────────────── kagi (PQC vault) ─────────────────────────
+
+(defn kagi-vault
+  "kagi-clj CLI vault — the self-sovereign PQC `op` replacement
+  (see kagi-clj / ADR-2606272330). Requires the `kagi` CLI on PATH and
+  the vault unlocked (master passphrase via KAGI_MASTER env or an
+  OS-keychain unlock; see `kagi unlock-status`).
+
+  kagi is `op`-compatible: `kagi get <item>` decrypts an item's primary
+  secret to stdout. Resolves:
+    {:item \"gmail-app-password\"}                 → kagi get <item>
+    {:item .. :field ..}                           → kagi item get <item> --fields <field> --reveal
+    {:ref \"kagi://<item>\"} / \"kagi://<item>\"   → kagi get <item>
+    \"<item>\" (bare string)                       → kagi get <item>
+
+  Prefer the bare {:item ..} form for app-password / token items; the
+  :field form mirrors op-vault and assumes kagi's `op`-compatible
+  `item get --fields` surface."
+  [& [_opts]]
+  (reify IVault
+    (-resolve [_ reference]
+      (cond
+        (:field reference)
+        (sh "kagi" "item" "get" (:item reference)
+            "--fields" (:field reference) "--reveal")
+
+        (or (string? reference) (:ref reference) (:item reference))
+        (let [s (cond (string? reference) reference
+                      (:ref reference) (:ref reference)
+                      :else (:item reference))
+              item (-> s (str/replace #"^kagi://" ""))]
+          (sh "kagi" "get" item))
+
+        :else
+        (throw (ex-info "kagi-vault: reference needs :item (or :ref / string)"
+                        {:reference (dissoc reference :value)}))))))
 
    ))
 
