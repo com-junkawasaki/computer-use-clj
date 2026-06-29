@@ -20,4 +20,9 @@
           :extra-deps {org.clojure/data.json {:mvn/version "2.5.0"}}}
   ;; read-only statement examples (sumitclub_meisai); `-M:dev:examples`
   :examples {:extra-paths ["examples"]
-             :extra-deps {org.clojure/data.json {:mvn/version "2.5.1"}}}}}
+             :extra-deps {org.clojure/data.json {:mvn/version "2.5.1"}}}
+  ;; clj-kondo, errors fail (matches the 3-actor / kagi-clj convention)
+  :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
+         :main-opts ["-m" "clj-kondo.main"
+                     "--lint" "src" "test" "examples"
+                     "--fail-level" "error"]}}}
